@@ -183,6 +183,64 @@ def build_articles_query(
     return ' '.join(query_parts), params
 
 
+# --- Reliability & Scraping Configuration ---
+
+# Rotating User-Agent strings to reduce blocking
+USER_AGENTS: list[str] = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0',
+]
+
+# Per-source configuration: rate limit delay (seconds), timeout (seconds)
+SOURCE_CONFIG: dict[str, dict[str, float]] = {
+    'GoogleFinance': {'min_delay': 0.3, 'max_delay': 0.8, 'timeout': 15},
+    'YahooFinance': {'min_delay': 0.5, 'max_delay': 1.5, 'timeout': 15},
+    'Finology': {'min_delay': 0.2, 'max_delay': 0.6, 'timeout': 10},
+    'Moneycontrol': {'min_delay': 0.3, 'max_delay': 1.0, 'timeout': 15},
+    'EconomicTimesMarkets': {'min_delay': 0.3, 'max_delay': 1.0, 'timeout': 15},
+    'BusinessStandard': {'min_delay': 0.3, 'max_delay': 1.0, 'timeout': 15},
+    'CnbcTv18': {'min_delay': 0.3, 'max_delay': 1.0, 'timeout': 15},
+    'Reuters': {'min_delay': 0.5, 'max_delay': 1.5, 'timeout': 20},
+    'GoogleNewsRSS': {'min_delay': 0.5, 'max_delay': 1.5, 'timeout': 15},
+}
+
+# Patterns that indicate we received a block/CAPTCHA page instead of real content
+CAPTCHA_INDICATORS: list[str] = [
+    'captcha',
+    'unusual traffic',
+    'are you a robot',
+    'access denied',
+    'rate limit',
+    'too many requests',
+    'please verify',
+    'blocked',
+    'cloudflare',
+    'challenge-platform',
+]
+
+# Maximum article age in days (articles older than this are discarded)
+MAX_ARTICLE_AGE_DAYS: int = 30
+
+# Source attribution suffixes to strip from headlines during cleaning
+SOURCE_SUFFIXES_TO_STRIP: list[str] = [
+    ' - Moneycontrol',
+    ' | Moneycontrol',
+    ' - Economic Times',
+    ' | ET Markets',
+    ' - Business Standard',
+    ' | Business Standard',
+    ' - CNBC TV18',
+    ' | CNBCTV18',
+    ' - Reuters',
+    ' | Reuters',
+    ' - The Economic Times',
+    ' | The Economic Times',
+]
+
+
 if __name__ == '__main__':
     # This block is for testing purposes only
     pass

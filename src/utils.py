@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import random
 import time
+import threading
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -11,15 +14,87 @@ from loguru import logger
 from nse import NSE
 from tqdm import tqdm
 
-from config import BATCH_SIZE, DB_UTILS, HEADER, SENTIMENT_MODEL_NAME
+from config import (
+    BATCH_SIZE,
+    CAPTCHA_INDICATORS,
+    DB_UTILS,
+    HEADER,
+    SENTIMENT_MODEL_NAME,
+    SOURCE_CONFIG,
+    USER_AGENTS,
+)
 from database import DatabaseManager
 from datetime import datetime, timedelta
+
+# --- Reliability Infrastructure ---
+
+
+class DomainRateLimiter:
+    """Thread-safe per-domain rate limiter to avoid overwhelming any single server."""
+
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._domain_timestamps: dict[str, float] = {}
+                    cls._instance._domain_lock = threading.Lock()
+        return cls._instance
+
+    def wait_for_domain(self, domain: str, min_delay: float = 0.3, max_delay: float = 1.0) -> None:
+        """Wait if needed to respect rate limits for a specific domain."""
+        with self._domain_lock:
+            now = time.time()
+            last_request = self._domain_timestamps.get(domain, 0)
+            elapsed = now - last_request
+            required_delay = random.uniform(min_delay, max_delay)  # nosec B311
+            if elapsed < required_delay:
+                sleep_time = required_delay - elapsed
+                time.sleep(sleep_time)
+            self._domain_timestamps[domain] = time.time()
+
+
+_rate_limiter = DomainRateLimiter()
+
+
+def get_random_user_agent() -> str:
+    """Return a random User-Agent string from the configured list."""
+    return random.choice(USER_AGENTS)  # nosec B311
+
+
+def _extract_domain(url: str) -> str:
+    """Extract the domain from a URL for rate limiting purposes."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        return parsed.netloc or 'unknown'
+    except Exception:
+        return 'unknown'
+
+
+def validate_response(content: str, url: str = '') -> bool:
+    """Check if a response contains real content vs. CAPTCHA/block page."""
+    if not content or len(content) < 200:
+        logger.warning(f'Response too short ({len(content)} chars) for {url}')
+        return False
+    content_lower = content.lower()
+    for indicator in CAPTCHA_INDICATORS:
+        # Only flag if the indicator appears prominently (in the first 5000 chars)
+        if indicator in content_lower[:5000]:
+            logger.warning(f'Possible CAPTCHA/block detected for {url} (matched: {indicator})')
+            return False
+    return True
+
 
 def get_webpage_content(
     url: str,
     custom_header: bool = True,
     impersonate: bool = False,
     max_retries: int = 3,
+    source_name: str = '',
 ) -> str:
     """
     Fetches the content of a webpage given its URL with exponential backoff for rate limiting.
@@ -29,54 +104,77 @@ def get_webpage_content(
         custom_header (bool): If True, uses a custom header for the request.
         impersonate (bool): If True, uses curl_cffi to impersonate a browser.
         max_retries (int): Maximum number of retry attempts for 429 responses.
+        source_name (str): Name of the news source (for per-source rate limiting).
 
     Returns:
         str: The content of the webpage.
     """
-    # Random delay to spread requests across processes and avoid overwhelming servers
-    # 100-500ms random delay
-    delay = random.uniform(0.1, 0.5)  # nosec B311: not a security risk
-    time.sleep(delay)
+    # Per-domain rate limiting
+    domain = _extract_domain(url)
+    source_cfg = SOURCE_CONFIG.get(source_name, {})
+    min_delay = source_cfg.get('min_delay', 0.3)
+    max_delay = source_cfg.get('max_delay', 0.8)
+    timeout = source_cfg.get('timeout', 15)
+    _rate_limiter.wait_for_domain(domain, min_delay, max_delay)
+
+    # Build headers with rotating User-Agent
+    headers = HEADER.copy()
+    headers['User-Agent'] = get_random_user_agent()
 
     for attempt in range(max_retries + 1):
         try:
             if impersonate:
-                response = requests.get(url, impersonate='chrome')
+                response = requests.get(url, impersonate='chrome', timeout=timeout)
                 response.raise_for_status()
-                return response.text
+                content = response.text
+                if not validate_response(content, url):
+                    logger.warning(f'Invalid response from {url} (impersonate mode)')
+                    return ''
+                return content
 
             response = (
-                httpx.get(url, headers=HEADER, follow_redirects=True, timeout=10)
+                httpx.get(url, headers=headers, follow_redirects=True, timeout=timeout)
                 if custom_header
-                else httpx.get(url, follow_redirects=True, timeout=10)
+                else httpx.get(url, follow_redirects=True, timeout=timeout)
             )
-            response.raise_for_status()
-            return response.text
 
-        # except httpx.HTTPStatusError as e:
-        #     if e.response.status_code == 429 and attempt < max_retries:
-        #         retry_after = int(e.response.headers.get('Retry-After', 2 ** attempt))
-        #         wait_time = min(retry_after, 2 ** attempt * 2)  # Cap at reasonable time
-        #         logger.warning(f'Rate limited (429) for {url}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})')
-        #         time.sleep(wait_time)
-        #         continue
-        #     elif e.response.status_code == 429:
-        #         logger.error(f'Rate limited (429) for {url}. Max retries ({max_retries}) exceeded')
-        #     else:
-        #         logger.warning(f'HTTP error {e.response.status_code} for URL: {url}')
-        #     return ''
+            # Handle rate limiting with retry
+            if response.status_code == 429:
+                if attempt < max_retries:
+                    retry_after = int(response.headers.get('Retry-After', 2 ** (attempt + 1)))
+                    wait_time = min(retry_after, 2 ** (attempt + 1) * 2)
+                    logger.warning(
+                        f'Rate limited (429) for {url}. Retrying in {wait_time}s '
+                        f'(attempt {attempt + 1}/{max_retries})'
+                    )
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(
+                        f'Rate limited (429) for {url}. Max retries ({max_retries}) exceeded'
+                    )
+                    return ''
+
+            response.raise_for_status()
+            content = response.text
+            if not validate_response(content, url):
+                logger.warning(f'Invalid response from {url}')
+                return ''
+            return content
+
         except Exception as e:
-            # Handle curl_cffi and other exceptions
+            # Handle curl_cffi and other exceptions with retry for 429
             if hasattr(e, 'response') and hasattr(e.response, 'status_code'):
                 if e.response.status_code == 429 and attempt < max_retries:
                     retry_after = int(
                         getattr(e.response, 'headers', {}).get(
-                            'Retry-After', 2**attempt
+                            'Retry-After', 2 ** (attempt + 1)
                         )
                     )
-                    wait_time = min(retry_after, 2**attempt * 2)
+                    wait_time = min(retry_after, 2 ** (attempt + 1) * 2)
                     logger.warning(
-                        f'Rate limited (429) for {url}. Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})'
+                        f'Rate limited (429) for {url}. Retrying in {wait_time}s '
+                        f'(attempt {attempt + 1}/{max_retries})'
                     )
                     time.sleep(wait_time)
                     continue
@@ -88,6 +186,9 @@ def get_webpage_content(
                 logger.warning(f'HTTP error {e.response.status_code} for URL: {url}')
                 return ''
             logger.warning(f'Error fetching {url}: {e}')
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
             return ''
 
     return ''
@@ -150,6 +251,7 @@ def parse_date(
         datetime_object: datetime
 
         if len(parts) != 2 and len(parts) != 3:
+            logger.warning(f'Invalid relative date format: {date_string}')
             return ''
 
         value: int = int(parts[0]) if parts[0] not in ['a', 'last'] else 1
@@ -195,6 +297,9 @@ def parse_date(
                 logger.warning(f"Error parsing date '{date_string}': {e}")
                 return ''
 
+    if (now - datetime_object).days > 30:
+        logger.warning(f'Stale date parsed: {date_string} -> {datetime_object}')
+
     # Format the datetime object to a string
     datetime_format: str = '%Y-%m-%d %H:%M:%S'
     formatted_date: str = datetime_object.strftime(datetime_format)
@@ -205,6 +310,8 @@ def get_relative_date(option: str) -> str:
 
     if option == "Past 24 Hours":
         return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    elif option == "Past 3 Days":
+        return (now - timedelta(days=3)).strftime('%Y-%m-%d')
     elif option == "Past 7 Days":
         return (now - timedelta(days=7)).strftime('%Y-%m-%d')
     elif option == "Past 1 Month":

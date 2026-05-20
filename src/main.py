@@ -43,6 +43,53 @@ def worker_collect_news(ticker_obj: TickerNewsObject) -> list[dict[str, str]]:
         return []  # Return empty list on error
 
 
+def _log_source_summary(all_articles: list[dict[str, str]], total_tickers: int) -> None:
+    """Log a per-source summary table showing article counts and data quality."""
+    from collections import Counter
+
+    source_counts: Counter[str] = Counter()
+    for article in all_articles:
+        source = article.get('source', 'Unknown')
+        source_counts[source] += 1
+
+    if not source_counts:
+        logger.warning('No articles to summarize.')
+        return
+
+    # Print summary table
+    logger.info('=' * 60)
+    logger.info(f'{"SOURCE SUMMARY":^60}')
+    logger.info('=' * 60)
+    logger.info(f'{"Source":<30} {"Articles":>10} {"Avg/Ticker":>10}')
+    logger.info('-' * 60)
+
+    for source, count in sorted(source_counts.items(), key=lambda x: -x[1]):
+        avg_per_ticker = count / max(total_tickers, 1)
+        logger.info(f'{source:<30} {count:>10} {avg_per_ticker:>10.1f}')
+
+    logger.info('-' * 60)
+    logger.info(f'{"TOTAL":<30} {sum(source_counts.values()):>10}')
+    logger.info('=' * 60)
+
+    # Warn about underperforming sources
+    expected_sources = [
+        'Moneycontrol', 'Economic Times Markets', 'Business Standard',
+        'CNBC TV18', 'Reuters',
+    ]
+    for source in expected_sources:
+        count = source_counts.get(source, 0)
+        if count == 0:
+            logger.warning(
+                f'⚠️  {source}: returned 0 articles across all tickers — '
+                f'source may be down or blocked'
+            )
+        elif count < total_tickers * 0.1:
+            logger.warning(
+                f'⚠️  {source}: only {count} articles for {total_tickers} tickers — '
+                f'data coverage may be low'
+            )
+
+
 def get_news(universe: str, multiprocess: bool) -> None:
     """
     Collect the news articles for a given universe of tickers and store them in the database.
@@ -95,6 +142,10 @@ def get_news(universe: str, multiprocess: bool) -> None:
     logger.success(
         f'Collected {len(all_articles)} articles in total for {len(ticker_objs)} tickers'
     )
+
+    # Log per-source summary
+    _log_source_summary(all_articles, len(ticker_objs))
+
     # Check if any articles were collected
     if not all_articles:
         logger.warning(
@@ -151,6 +202,7 @@ def aggregate_and_push():
     now = datetime.now(ist)
 
     date_24h = (now - timedelta(days=1)).strftime('%Y-%m-%d')
+    date_3d = (now - timedelta(days=3)).strftime('%Y-%m-%d')
     date_7d = (now - timedelta(days=7)).strftime('%Y-%m-%d')
     date_1m = (now - timedelta(days=30)).strftime('%Y-%m-%d')
 
@@ -171,12 +223,16 @@ def aggregate_and_push():
         return agg_df
 
     df_24h = get_agg_df(date_24h)
+    df_3d = get_agg_df(date_3d)
     df_7d = get_agg_df(date_7d)
     df_1m = get_agg_df(date_1m)
 
     # ✅ push only if data exists
     if not df_24h.empty:
         push_to_sheet(df_24h, "24H_Data")
+
+    if not df_3d.empty:
+        push_to_sheet(df_3d, "3D_Data")
 
     if not df_7d.empty:
         push_to_sheet(df_7d, "7D_Data")
