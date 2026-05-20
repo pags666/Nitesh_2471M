@@ -240,7 +240,7 @@ def aggregate_and_push():
     if not df_1m.empty:
         push_to_sheet(df_1m, "1M_Data")
 
-    print("✅ Sheets updated!")
+    logger.success('Sheets updated!')
 
 if __name__ == '__main__':
     # Example usage: Fetch data for Nifty 50.
