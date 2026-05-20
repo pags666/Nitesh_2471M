@@ -5,23 +5,19 @@ This script fetches stock news articles, adds them to a database and computes se
 
 import multiprocessing as mp
 import sys
+from datetime import datetime, timedelta
 
 import pandas as pd
+import pytz
 from loguru import logger
 from tqdm import tqdm
 
 import utils as utils
 from database import DatabaseManager
-from news_fetcher import TickerNewsObject
-from datetime import datetime, timedelta
-from database import DatabaseManager
 from export_to_sheets import push_to_sheet
+from news_fetcher import TickerNewsObject
 
-from utils import get_relative_date
-from datetime import datetime, timedelta
-import pytz
-
-ist = pytz.timezone("Asia/Kolkata")
+ist = pytz.timezone('Asia/Kolkata')
 now = datetime.now(ist)
 
 # Remove the default logger to prevent duplicate log entries.
@@ -73,8 +69,11 @@ def _log_source_summary(all_articles: list[dict[str, str]], total_tickers: int) 
 
     # Warn about underperforming sources
     expected_sources = [
-        'Moneycontrol', 'Economic Times Markets', 'Business Standard',
-        'CNBC TV18', 'Reuters',
+        'Moneycontrol',
+        'Economic Times Markets',
+        'Business Standard',
+        'CNBC TV18',
+        'Reuters',
     ]
     for source in expected_sources:
         count = source_counts.get(source, 0)
@@ -196,9 +195,10 @@ def compute_and_update_sentiment(n: int = 200):
         f'Updated database with sentiment scores for {articles_df_with_sentiment.shape[0]} articles.'
     )
 
+
 def aggregate_and_push():
-    dbm = DatabaseManager() 
-    ist = pytz.timezone("Asia/Kolkata")
+    dbm = DatabaseManager()
+    ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist)
 
     date_24h = (now - timedelta(days=1)).strftime('%Y-%m-%d')
@@ -213,13 +213,13 @@ def aggregate_and_push():
             return df
 
         agg_df = (
-            df.groupby("ticker")["compound_sentiment"]   # ✅ MUST BE THIS
+            df.groupby('ticker')['compound_sentiment']  # ✅ MUST BE THIS
             .mean()
             .reset_index()
         )
-    
-        agg_df = agg_df.rename(columns={"compound_sentiment": "sentiment_score"})
-    
+
+        agg_df = agg_df.rename(columns={'compound_sentiment': 'sentiment_score'})
+
         return agg_df
 
     df_24h = get_agg_df(date_24h)
@@ -229,18 +229,19 @@ def aggregate_and_push():
 
     # ✅ push only if data exists
     if not df_24h.empty:
-        push_to_sheet(df_24h, "24H_Data")
+        push_to_sheet(df_24h, '24H_Data')
 
     if not df_3d.empty:
-        push_to_sheet(df_3d, "3D_Data")
+        push_to_sheet(df_3d, '3D_Data')
 
     if not df_7d.empty:
-        push_to_sheet(df_7d, "7D_Data")
+        push_to_sheet(df_7d, '7D_Data')
 
     if not df_1m.empty:
-        push_to_sheet(df_1m, "1M_Data")
+        push_to_sheet(df_1m, '1M_Data')
 
     logger.success('Sheets updated!')
+
 
 if __name__ == '__main__':
     # Example usage: Fetch data for Nifty 50.
@@ -250,4 +251,4 @@ if __name__ == '__main__':
     # Call the function to fetch news
     get_news(universe, multiprocess)
     compute_and_update_sentiment()
-    aggregate_and_push()  
+    aggregate_and_push()

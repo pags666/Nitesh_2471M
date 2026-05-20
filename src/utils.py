@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import random
-import time
 import threading
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -24,7 +24,6 @@ from config import (
     USER_AGENTS,
 )
 from database import DatabaseManager
-from datetime import datetime, timedelta
 
 # --- Reliability Infrastructure ---
 
@@ -44,7 +43,9 @@ class DomainRateLimiter:
                     cls._instance._domain_lock = threading.Lock()
         return cls._instance
 
-    def wait_for_domain(self, domain: str, min_delay: float = 0.3, max_delay: float = 1.0) -> None:
+    def wait_for_domain(
+        self, domain: str, min_delay: float = 0.3, max_delay: float = 1.0
+    ) -> None:
         """Wait if needed to respect rate limits for a specific domain."""
         with self._domain_lock:
             now = time.time()
@@ -69,6 +70,7 @@ def _extract_domain(url: str) -> str:
     """Extract the domain from a URL for rate limiting purposes."""
     try:
         from urllib.parse import urlparse
+
         parsed = urlparse(url)
         return parsed.netloc or 'unknown'
     except Exception:
@@ -84,7 +86,9 @@ def validate_response(content: str, url: str = '') -> bool:
     for indicator in CAPTCHA_INDICATORS:
         # Only flag if the indicator appears prominently (in the first 5000 chars)
         if indicator in content_lower[:5000]:
-            logger.warning(f'Possible CAPTCHA/block detected for {url} (matched: {indicator})')
+            logger.warning(
+                f'Possible CAPTCHA/block detected for {url} (matched: {indicator})'
+            )
             return False
     return True
 
@@ -141,7 +145,9 @@ def get_webpage_content(
             # Handle rate limiting with retry
             if response.status_code == 429:
                 if attempt < max_retries:
-                    retry_after = int(response.headers.get('Retry-After', 2 ** (attempt + 1)))
+                    retry_after = int(
+                        response.headers.get('Retry-After', 2 ** (attempt + 1))
+                    )
                     wait_time = min(retry_after, 2 ** (attempt + 1) * 2)
                     logger.warning(
                         f'Rate limited (429) for {url}. Retrying in {wait_time}s '
@@ -187,7 +193,7 @@ def get_webpage_content(
                 return ''
             logger.warning(f'Error fetching {url}: {e}')
             if attempt < max_retries:
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
                 continue
             return ''
 
@@ -305,20 +311,23 @@ def parse_date(
     formatted_date: str = datetime_object.strftime(datetime_format)
     return formatted_date
 
+
 def get_relative_date(option: str) -> str:
     now = datetime.now()
 
-    if option == "Past 24 Hours":
+    if option == 'Past 24 Hours':
         return (now - timedelta(days=1)).strftime('%Y-%m-%d')
-    elif option == "Past 3 Days":
+    elif option == 'Past 3 Days':
         return (now - timedelta(days=3)).strftime('%Y-%m-%d')
-    elif option == "Past 7 Days":
+    elif option == 'Past 7 Days':
         return (now - timedelta(days=7)).strftime('%Y-%m-%d')
-    elif option == "Past 1 Month":
+    elif option == 'Past 1 Month':
         return (now - timedelta(days=30)).strftime('%Y-%m-%d')
 
     # default fallback
     return (now - timedelta(days=1)).strftime('%Y-%m-%d')
+
+
 def analyse_sentiment(headlines: list[str]) -> pd.DataFrame:
     """
     Perform Sentiment Analysis using finBERT model. Create a dataframe from the results.

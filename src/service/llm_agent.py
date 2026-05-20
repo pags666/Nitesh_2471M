@@ -23,11 +23,14 @@ def user_query_optimizer_agent(query: str = ''):
 
     model = 'gemini-2.5-flash'
     contents = types.Content(
-            role='user',
-            parts=[
-                types.Part.from_text(text=query or """defense sector stocks with strong financial performance over the last 5 years."""),
-            ],
-        )
+        role='user',
+        parts=[
+            types.Part.from_text(
+                text=query
+                or """defense sector stocks with strong financial performance over the last 5 years."""
+            ),
+        ],
+    )
     generate_content_config = types.GenerateContentConfig(
         thinking_config=types.ThinkingConfig(
             thinking_budget=0,
@@ -60,11 +63,10 @@ def structured_output_agent(query: str = ''):
 
 
 if __name__ == '__main__':
-    query = input("Enter your query: ")
+    query = input('Enter your query: ')
     try:
         user_query_optimizer_agent(query)
     except ServerError:
-        print("Model is overloaded. Request will be retried.")
+        print('Model is overloaded. Request will be retried.')
         time.sleep(5)
         user_query_optimizer_agent(query)
-

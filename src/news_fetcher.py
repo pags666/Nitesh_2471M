@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from dataclasses import dataclass
+from datetime import datetime
 from email.utils import parsedate_to_datetime
-from urllib.parse import quote_plus, urljoin
 from typing import final
+from urllib.parse import quote_plus, urljoin
 
 from bs4 import BeautifulSoup, Tag
 from loguru import logger
@@ -14,7 +14,6 @@ from typing_extensions import override
 
 from config import MAX_ARTICLE_AGE_DAYS, SOURCE_SUFFIXES_TO_STRIP
 from utils import get_webpage_content, parse_date
-
 
 # --- Health Monitoring ---
 
@@ -48,7 +47,9 @@ def clean_headline(headline: str) -> str:
 def is_article_fresh(date_posted: str) -> bool:
     """Check if an article's date is within the acceptable age range."""
     if not date_posted:
-        return True  # Allow articles with missing dates (better to include than exclude)
+        return (
+            True  # Allow articles with missing dates (better to include than exclude)
+        )
     try:
         article_date = datetime.strptime(date_posted, '%Y-%m-%d %H:%M:%S')
         age = (datetime.now() - article_date).days
@@ -101,10 +102,7 @@ class GoogleNewsSiteSource(NewsSource):
 
     def get_articles(self, ticker: str) -> list[dict[str, str]]:
         query = f'{ticker} site:{self.site_domain}'
-        url = (
-            f'{self.base_url}?q={quote_plus(query)}'
-            '&hl=en-IN&gl=IN&ceid=IN:en'
-        )
+        url = f'{self.base_url}?q={quote_plus(query)}&hl=en-IN&gl=IN&ceid=IN:en'
         response = get_webpage_content(
             url, custom_header=False, source_name='GoogleNewsRSS'
         )
@@ -123,9 +121,7 @@ class GoogleNewsSiteSource(NewsSource):
             pub_date = pub_date_tag.text.strip() if pub_date_tag else ''
 
             if not title or not link or not pub_date:
-                logger.warning(
-                    f'Missing RSS fields for {self.source_name} {ticker}'
-                )
+                logger.warning(f'Missing RSS fields for {self.source_name} {ticker}')
                 continue
 
             date_posted = self._parse_rss_date(pub_date)
@@ -186,9 +182,7 @@ class DualStrategySource(NewsSource):
                 report.method_used = 'direct'
         except Exception as e:
             report.error = f'Direct fetch error: {e}'
-            logger.warning(
-                f'Direct fetch failed for {self.source_name}/{ticker}: {e}'
-            )
+            logger.warning(f'Direct fetch failed for {self.source_name}/{ticker}: {e}')
 
         # Fall back to RSS if direct returned nothing
         if report.direct_count == 0:
@@ -283,18 +277,12 @@ class GoogleFinanceSource(NewsSource):
 
             for article in article_elements:
                 try:
-                    headline: str = self._select_text(
-                        article, self.headline_selectors
-                    )
+                    headline: str = self._select_text(article, self.headline_selectors)
                     relative_date_str: str = self._select_text(
                         article, self.date_selectors
                     )
-                    source: str = self._select_text(
-                        article, self.source_selectors
-                    )
-                    article_link: str = self._select_link(
-                        article, self.link_selectors
-                    )
+                    source: str = self._select_text(article, self.source_selectors)
+                    article_link: str = self._select_link(article, self.link_selectors)
 
                     if not all([headline, relative_date_str, source, article_link]):
                         logger.warning(
@@ -410,12 +398,8 @@ class YahooFinanceSource(NewsSource):
 
             for article in article_elements:
                 try:
-                    article_link_raw = self._select_link(
-                        article, self.link_selectors
-                    )
-                    headline: str = self._select_text(
-                        article, self.headline_selectors
-                    )
+                    article_link_raw = self._select_link(article, self.link_selectors)
+                    headline: str = self._select_text(article, self.headline_selectors)
                     footer_tag: Tag | None = self._select_tag(
                         article, self.footer_selectors
                     )
@@ -528,12 +512,8 @@ class FinologySource(NewsSource):
 
             for article in article_elements:
                 try:
-                    headline = self._select_text(
-                        article, self.headline_selectors
-                    )
-                    date_str = self._select_text(
-                        article, self.date_selectors
-                    )
+                    headline = self._select_text(article, self.headline_selectors)
+                    date_str = self._select_text(article, self.date_selectors)
 
                     if not headline or not date_str:
                         logger.warning(
@@ -584,7 +564,9 @@ class MoneycontrolSource(DualStrategySource):
 
     def __init__(self) -> None:
         super().__init__('moneycontrol.com', 'Moneycontrol')
-        self.search_url = 'https://www.moneycontrol.com/stocks/cptmarket/compsearchnew/searchBox'
+        self.search_url = (
+            'https://www.moneycontrol.com/stocks/cptmarket/compsearchnew/searchBox'
+        )
 
     @override
     def _fetch_direct(self, ticker: str) -> list[dict[str, str]]:
@@ -648,8 +630,7 @@ class MoneycontrolSource(DualStrategySource):
         soup = BeautifulSoup(response, 'html.parser')
         # Look for news section on company page
         news_items = soup.select(
-            'div.news_sec a, div.bsr_wleft a, a.arial11_blue, '
-            'div.MT15 a, li.clearfix a'
+            'div.news_sec a, div.bsr_wleft a, a.arial11_blue, div.MT15 a, li.clearfix a'
         )
 
         for item in news_items[:15]:
@@ -721,8 +702,7 @@ class EconomicTimesMarketsSource(DualStrategySource):
         if not article_elements:
             # Fallback: try general link-based extraction
             links = soup.select(
-                'a[href*="/markets/"], a[href*="/stocks/"], '
-                'a[href*="/industry/"]'
+                'a[href*="/markets/"], a[href*="/stocks/"], a[href*="/industry/"]'
             )
             for link in links[:15]:
                 title = link.get_text(strip=True)
@@ -730,16 +710,12 @@ class EconomicTimesMarketsSource(DualStrategySource):
                 if not title or len(title) < 15 or not href:
                     continue
                 if not href.startswith('http'):
-                    href = urljoin(
-                        'https://economictimes.indiatimes.com', href
-                    )
+                    href = urljoin('https://economictimes.indiatimes.com', href)
                 articles.append(
                     {
                         'ticker': ticker,
                         'headline': clean_headline(title),
-                        'date_posted': datetime.now().strftime(
-                            '%Y-%m-%d %H:%M:%S'
-                        ),
+                        'date_posted': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'article_link': href,
                         'source': 'Economic Times Markets',
                     }
@@ -762,9 +738,7 @@ class EconomicTimesMarketsSource(DualStrategySource):
                 if not href:
                     continue
                 if not href.startswith('http'):
-                    href = urljoin(
-                        'https://economictimes.indiatimes.com', href
-                    )
+                    href = urljoin('https://economictimes.indiatimes.com', href)
 
                 # Extract date
                 date_posted = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -791,9 +765,7 @@ class EconomicTimesMarketsSource(DualStrategySource):
                     }
                 )
             except Exception as e:
-                logger.warning(
-                    f'Error parsing ET Markets article for {ticker}: {e}'
-                )
+                logger.warning(f'Error parsing ET Markets article for {ticker}: {e}')
                 continue
 
         return articles
@@ -812,7 +784,9 @@ class BusinessStandardSource(DualStrategySource):
     @override
     def _fetch_direct(self, ticker: str) -> list[dict[str, str]]:
         articles: list[dict[str, str]] = []
-        search_url = f'https://www.business-standard.com/search?type=news&q={quote_plus(ticker)}'
+        search_url = (
+            f'https://www.business-standard.com/search?type=news&q={quote_plus(ticker)}'
+        )
         response = get_webpage_content(
             search_url, impersonate=True, source_name='BusinessStandard'
         )
@@ -834,8 +808,7 @@ class BusinessStandardSource(DualStrategySource):
         if not result_elements:
             # Fallback: extract from general links
             links = soup.select(
-                'a[href*="/article/"], a[href*="/companies/"], '
-                'a[href*="/markets/"]'
+                'a[href*="/article/"], a[href*="/companies/"], a[href*="/markets/"]'
             )
             for link in links[:15]:
                 title = link.get_text(strip=True)
@@ -848,9 +821,7 @@ class BusinessStandardSource(DualStrategySource):
                     {
                         'ticker': ticker,
                         'headline': clean_headline(title),
-                        'date_posted': datetime.now().strftime(
-                            '%Y-%m-%d %H:%M:%S'
-                        ),
+                        'date_posted': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'article_link': href,
                         'source': 'Business Standard',
                     }
@@ -961,9 +932,7 @@ class CnbcTv18Source(DualStrategySource):
                     {
                         'ticker': ticker,
                         'headline': clean_headline(title),
-                        'date_posted': datetime.now().strftime(
-                            '%Y-%m-%d %H:%M:%S'
-                        ),
+                        'date_posted': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'article_link': href,
                         'source': 'CNBC TV18',
                     }
@@ -1009,9 +978,7 @@ class CnbcTv18Source(DualStrategySource):
                     }
                 )
             except Exception as e:
-                logger.warning(
-                    f'Error parsing CNBC TV18 article for {ticker}: {e}'
-                )
+                logger.warning(f'Error parsing CNBC TV18 article for {ticker}: {e}')
                 continue
 
         return articles
@@ -1058,8 +1025,7 @@ class ReutersSource(DualStrategySource):
         if not result_elements:
             # Fallback: try extracting from any article-like links
             links = soup.select(
-                'a[href*="/business/"], a[href*="/markets/"], '
-                'a[href*="/world/"]'
+                'a[href*="/business/"], a[href*="/markets/"], a[href*="/world/"]'
             )
             for link in links[:10]:
                 title = link.get_text(strip=True)
@@ -1072,9 +1038,7 @@ class ReutersSource(DualStrategySource):
                     {
                         'ticker': ticker,
                         'headline': clean_headline(title),
-                        'date_posted': datetime.now().strftime(
-                            '%Y-%m-%d %H:%M:%S'
-                        ),
+                        'date_posted': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                         'article_link': href,
                         'source': 'Reuters',
                     }
@@ -1118,9 +1082,7 @@ class ReutersSource(DualStrategySource):
                     }
                 )
             except Exception as e:
-                logger.warning(
-                    f'Error parsing Reuters article for {ticker}: {e}'
-                )
+                logger.warning(f'Error parsing Reuters article for {ticker}: {e}')
                 continue
 
         return articles
@@ -1188,7 +1150,10 @@ class TickerNewsObject:
                 )
 
                 # Collect health report if available (DualStrategySource instances)
-                if hasattr(source_instance, 'health_report') and source_instance.health_report:
+                if (
+                    hasattr(source_instance, 'health_report')
+                    and source_instance.health_report
+                ):
                     self.health_reports.append(source_instance.health_report)
 
                 if fetched_articles:
@@ -1205,9 +1170,7 @@ class TickerNewsObject:
         dedup_count = original_count - len(self.articles)
 
         if dedup_count > 0:
-            logger.info(
-                f'Removed {dedup_count} duplicate articles for {self.ticker}'
-            )
+            logger.info(f'Removed {dedup_count} duplicate articles for {self.ticker}')
 
         logger.success(
             f'Collected {len(self.articles)} unique articles in total for {self.ticker}'

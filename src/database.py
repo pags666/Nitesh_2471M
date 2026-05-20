@@ -119,31 +119,24 @@ class DatabaseManager:
         """
         Insert articles into the database.
         """
-    
+
         logger.info(
             f'Inserting {articles_df.shape[0]} articles '
             f'{"with" if has_sentiment else "without"} sentiment'
         )
-    
+
         with self.get_connection() as conn:
-    
             conn.register(
-                "articles_df",
+                'articles_df',
                 articles_df,
             )
-    
+
             if has_sentiment:
-                conn.execute(
-                    INSERT_DATA["article_data_with_sentiment"]
-                )
+                conn.execute(INSERT_DATA['article_data_with_sentiment'])
             else:
-                conn.execute(
-                    INSERT_DATA["article_data_without_sentiment"]
-                )
-    
-        logger.success(
-            f'Inserted {articles_df.shape[0]} articles'
-        )
+                conn.execute(INSERT_DATA['article_data_without_sentiment'])
+
+        logger.success(f'Inserted {articles_df.shape[0]} articles')
 
     def insert_ticker_metadata(
         self, ticker_meta: list[list[str | float | None]]
