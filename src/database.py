@@ -111,6 +111,15 @@ class DatabaseManager:
             # Create ticker metadata table with ticker as primary key
             conn.execute(CREATE_TABLE['ticker_meta'])
 
+            # Migration: add confidence column to existing databases
+            try:
+                conn.execute(
+                    'ALTER TABLE article_data ADD COLUMN confidence FLOAT DEFAULT NULL'
+                )
+                logger.info('Migrated article_data: added confidence column')
+            except Exception:
+                pass  # Column already exists
+
     def insert_articles(
         self,
         articles_df: pd.DataFrame,

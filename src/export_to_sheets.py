@@ -40,6 +40,8 @@ def _load_google_credentials() -> dict[str, Any]:
 def push_to_sheet(df: pd.DataFrame, sheet_name: str) -> None:
     """
     Append sentiment data to the named sheet tab.
+    Supports both legacy (ticker, sentiment_score) and expanded
+    (ticker, sentiment_score, article_count, avg_confidence, signal) formats.
     """
 
     scope = [
@@ -56,7 +58,8 @@ def push_to_sheet(df: pd.DataFrame, sheet_name: str) -> None:
         worksheet = sheet.worksheet(sheet_name)
     except WorksheetNotFound:
         rows = max(len(df) + 1, 1000)
-        worksheet = sheet.add_worksheet(title=sheet_name, rows=rows, cols=4)
+        cols = 7 if 'signal' in df.columns else 4
+        worksheet = sheet.add_worksheet(title=sheet_name, rows=rows, cols=cols)
 
     ist = pytz.timezone('Asia/Kolkata')
     now = datetime.now(ist).strftime('%Y-%m-%d %H:%M:%S')
@@ -65,17 +68,37 @@ def push_to_sheet(df: pd.DataFrame, sheet_name: str) -> None:
     df['ticker'] = df['ticker'].astype(str)
 
     existing_data = worksheet.get_all_values()
-
     rows = []
 
-    # ✅ header only once
+    # Determine if using expanded format
+    has_signal = 'signal' in df.columns
+
+    # Header only once
     if not existing_data:
-        rows.append(['Stock Name', 'Sentiment Score', '', 'Date & Time'])
+        if has_signal:
+            rows.append([
+                'Stock Name', 'Sentiment Score', 'Articles',
+                'Confidence', 'Signal', '', 'Date & Time',
+            ])
+        else:
+            rows.append(['Stock Name', 'Sentiment Score', '', 'Date & Time'])
 
-    # ✅ data
+    # Data rows
     for _, row in df.iterrows():
-        rows.append([str(row['ticker']), float(row['sentiment_score']), '', now])
+        if has_signal:
+            rows.append([
+                str(row['ticker']),
+                float(row['sentiment_score']),
+                int(row.get('article_count', 0)),
+                float(row.get('avg_confidence', 0)),
+                str(row.get('signal', '')),
+                '',
+                now,
+            ])
+        else:
+            rows.append([str(row['ticker']), float(row['sentiment_score']), '', now])
 
-    # 🔥 FIX: force append from column A
+    # Append from column A
     start_row = len(existing_data) + 1
     worksheet.update(rows, f'A{start_row}')
+

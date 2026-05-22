@@ -48,6 +48,7 @@ CREATE_TABLE = {
             positive_sentiment FLOAT DEFAULT NULL,
             neutral_sentiment FLOAT DEFAULT NULL,
             compound_sentiment FLOAT DEFAULT NULL,
+            confidence FLOAT DEFAULT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (ticker, headline)
         )
@@ -69,12 +70,12 @@ INSERT_DATA = {
     'article_data_with_sentiment': """
         INSERT OR REPLACE INTO article_data (
             ticker, headline, date_posted, source, article_link,
-            neutral_sentiment, negative_sentiment, positive_sentiment, compound_sentiment, created_at
-
+            neutral_sentiment, negative_sentiment, positive_sentiment,
+            compound_sentiment, confidence, created_at
         )
         SELECT
             ticker, headline, date_posted, source, article_link,
-            Neutral, Negative, Positive, compound, CURRENT_TIMESTAMP
+            Neutral, Negative, Positive, compound, confidence, CURRENT_TIMESTAMP
         FROM articles_df;
     """,
     'article_data_without_sentiment': """
@@ -236,7 +237,65 @@ SOURCE_SUFFIXES_TO_STRIP: list[str] = [
     ' | The Economic Times',
 ]
 
+# --- Accuracy & Signal Quality Configuration ---
+
+# Source reliability weights for weighted sentiment aggregation.
+# Higher weight = more trusted source. Tier 1 > Tier 2 > Tier 3.
+SOURCE_WEIGHTS: dict[str, float] = {
+    # Tier 1: Premium financial news
+    'Reuters': 1.5,
+    'Economic Times Markets': 1.3,
+    'Moneycontrol': 1.3,
+    # Tier 2: Solid financial coverage
+    'Business Standard': 1.2,
+    'CNBC TV18': 1.2,
+    # Tier 3: Aggregators & general finance
+    'Google Finance': 1.0,
+    'Yahoo Finance': 1.0,
+    'Finology': 0.8,
+}
+DEFAULT_SOURCE_WEIGHT: float = 1.0  # Fallback for unknown sources
+
+# Minimum number of articles required for a reliable signal.
+# Tickers with fewer articles are flagged as low confidence.
+MIN_ARTICLES_THRESHOLD: int = 3
+
+# Recency half-life in days for exponential time decay weighting.
+# Articles lose 50% of their weight every RECENCY_HALF_LIFE_DAYS days.
+RECENCY_HALF_LIFE_DAYS: float = 3.0
+
+# Signal classification thresholds
+SIGNAL_THRESHOLDS: dict[str, float] = {
+    'STRONG_BUY': 0.25,
+    'BUY': 0.08,
+    'SELL': -0.08,
+    'STRONG_SELL': -0.25,
+}
+
+# Minimum headline length (characters) for reliable sentiment analysis.
+# Shorter headlines produce unreliable FinBERT scores.
+MIN_HEADLINE_LENGTH: int = 20
+
+# Generic headline patterns to filter out (case-insensitive substrings).
+# These are market roundups / listicles, not company-specific news.
+GENERIC_HEADLINE_PATTERNS: list[str] = [
+    'top stocks to watch',
+    'top picks',
+    'stocks to buy',
+    'stocks in focus',
+    'market wrap',
+    'market roundup',
+    'sensex today',
+    'nifty today',
+    'market update',
+    'buzzing stocks',
+]
+
+# Maximum articles to process for sentiment per run
+SENTIMENT_BATCH_LIMIT: int = 5000
+
 
 if __name__ == '__main__':
     # This block is for testing purposes only
     pass
+

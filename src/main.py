@@ -7,12 +7,21 @@ import multiprocessing as mp
 import sys
 from datetime import datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import pytz
 from loguru import logger
 from tqdm import tqdm
 
 import utils as utils
+from config import (
+    DEFAULT_SOURCE_WEIGHT,
+    MIN_ARTICLES_THRESHOLD,
+    RECENCY_HALF_LIFE_DAYS,
+    SENTIMENT_BATCH_LIMIT,
+    SIGNAL_THRESHOLDS,
+    SOURCE_WEIGHTS,
+)
 from database import DatabaseManager
 from export_to_sheets import push_to_sheet
 from news_fetcher import TickerNewsObject
@@ -167,12 +176,11 @@ def get_news(universe: str, multiprocess: bool) -> None:
         logger.error(f'Error inserting articles into database: {e}')
 
 
-def compute_and_update_sentiment(n: int = 200):
+def compute_and_update_sentiment(n: int = SENTIMENT_BATCH_LIMIT):
     """
     Fetch the latest N articles without sentiment scores from the database and compute their sentiment scores.
     Then, update the database with the computed sentiment scores.
     """
-    # get 200 latest articles without sentiment score from the database
     dbm: DatabaseManager = DatabaseManager()
     articles_df: pd.DataFrame = dbm.get_articles(n=n, has_sentiment=False, latest=True)
     if articles_df.empty:
@@ -188,12 +196,87 @@ def compute_and_update_sentiment(n: int = 200):
         sentiment_scores, left_index=True, right_index=True, how='inner'
     )
     # update the database with the sentiment scores
-    # we can use insert function since all the duplicate articles (ticker, headline) will be replaced
-    # and the new sentiment scores will be added.
     dbm.insert_articles(articles_df_with_sentiment, has_sentiment=True)
     logger.success(
         f'Updated database with sentiment scores for {articles_df_with_sentiment.shape[0]} articles.'
     )
+
+
+def classify_signal(score: float) -> str:
+    """Classify a sentiment score into a trading signal."""
+    if score >= SIGNAL_THRESHOLDS['STRONG_BUY']:
+        return 'STRONG_BUY'
+    elif score >= SIGNAL_THRESHOLDS['BUY']:
+        return 'BUY'
+    elif score <= SIGNAL_THRESHOLDS['STRONG_SELL']:
+        return 'STRONG_SELL'
+    elif score <= SIGNAL_THRESHOLDS['SELL']:
+        return 'SELL'
+    return 'NEUTRAL'
+
+
+def compute_weighted_sentiment(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Compute weighted sentiment scores per ticker using:
+    1. Recency decay — recent articles weigh more (exponential half-life)
+    2. Source quality — trusted sources weigh more
+    3. Confidence — high-confidence FinBERT predictions weigh more
+
+    Returns DataFrame with: ticker, sentiment_score, article_count, avg_confidence, signal
+    """
+    if df.empty:
+        return df
+
+    ist = pytz.timezone('Asia/Kolkata')
+    now = datetime.now(ist)
+    df = df.copy()
+
+    # --- 1. Recency weight: exponential decay ---
+    # Articles lose 50% of weight every RECENCY_HALF_LIFE_DAYS days
+    df['date_parsed'] = pd.to_datetime(df['date_posted'], errors='coerce')
+    df['age_days'] = (now.replace(tzinfo=None) - df['date_parsed']).dt.total_seconds() / 86400
+    df['age_days'] = df['age_days'].clip(lower=0)  # No negative ages
+    decay_rate = np.log(2) / RECENCY_HALF_LIFE_DAYS
+    df['recency_weight'] = np.exp(-decay_rate * df['age_days'])
+
+    # --- 2. Source quality weight ---
+    df['source_weight'] = df['source'].map(SOURCE_WEIGHTS).fillna(DEFAULT_SOURCE_WEIGHT)
+
+    # --- 3. Confidence weight ---
+    # Use confidence directly if available, otherwise default to 0.5
+    if 'confidence' in df.columns:
+        df['confidence_weight'] = df['confidence'].fillna(0.5)
+    else:
+        df['confidence_weight'] = 0.5
+
+    # --- Combined weight ---
+    df['total_weight'] = df['recency_weight'] * df['source_weight'] * df['confidence_weight']
+
+    # --- Weighted aggregation per ticker ---
+    df['weighted_sentiment'] = df['compound_sentiment'] * df['total_weight']
+
+    agg = df.groupby('ticker').agg(
+        weighted_sum=('weighted_sentiment', 'sum'),
+        weight_total=('total_weight', 'sum'),
+        article_count=('ticker', 'count'),
+        avg_confidence=('confidence_weight', 'mean'),
+    ).reset_index()
+
+    # Weighted mean
+    agg['sentiment_score'] = (agg['weighted_sum'] / agg['weight_total']).round(4)
+    agg['avg_confidence'] = agg['avg_confidence'].round(3)
+
+    # --- Signal classification ---
+    agg['signal'] = agg['sentiment_score'].apply(classify_signal)
+
+    # --- Flag low-article tickers ---
+    agg.loc[
+        agg['article_count'] < MIN_ARTICLES_THRESHOLD, 'signal'
+    ] = agg.loc[
+        agg['article_count'] < MIN_ARTICLES_THRESHOLD, 'signal'
+    ] + '*'  # Asterisk indicates low confidence
+
+    return agg[['ticker', 'sentiment_score', 'article_count', 'avg_confidence', 'signal']]
 
 
 def aggregate_and_push():
@@ -206,39 +289,27 @@ def aggregate_and_push():
     date_7d = (now - timedelta(days=7)).strftime('%Y-%m-%d')
     date_1m = (now - timedelta(days=30)).strftime('%Y-%m-%d')
 
-    def get_agg_df(date):
+    def get_agg_df(date: str) -> pd.DataFrame:
         df = dbm.get_articles(n=10000, has_sentiment=True, after_date=date)
-
         if df.empty:
             return df
+        return compute_weighted_sentiment(df)
 
-        agg_df = (
-            df.groupby('ticker')['compound_sentiment']  # ✅ MUST BE THIS
-            .mean()
-            .reset_index()
-        )
+    periods = {
+        '24H_Data': date_24h,
+        '3D_Data': date_3d,
+        '7D_Data': date_7d,
+        '1M_Data': date_1m,
+    }
 
-        agg_df = agg_df.rename(columns={'compound_sentiment': 'sentiment_score'})
-
-        return agg_df
-
-    df_24h = get_agg_df(date_24h)
-    df_3d = get_agg_df(date_3d)
-    df_7d = get_agg_df(date_7d)
-    df_1m = get_agg_df(date_1m)
-
-    # ✅ push only if data exists
-    if not df_24h.empty:
-        push_to_sheet(df_24h, '24H_Data')
-
-    if not df_3d.empty:
-        push_to_sheet(df_3d, '3D_Data')
-
-    if not df_7d.empty:
-        push_to_sheet(df_7d, '7D_Data')
-
-    if not df_1m.empty:
-        push_to_sheet(df_1m, '1M_Data')
+    for sheet_name, date_cutoff in periods.items():
+        df = get_agg_df(date_cutoff)
+        if not df.empty:
+            push_to_sheet(df, sheet_name)
+            logger.info(
+                f'{sheet_name}: pushed {len(df)} tickers '
+                f'(avg articles/ticker: {df["article_count"].mean():.1f})'
+            )
 
     logger.success('Sheets updated!')
 

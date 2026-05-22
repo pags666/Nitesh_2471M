@@ -291,7 +291,7 @@ def parse_date(
         else:
             try:
                 datetime_object = datetime.strptime(date_string, format).replace(
-                    year=2025
+                    year=now.year
                 )
                 datetime_object = (
                     datetime_object
@@ -404,15 +404,20 @@ def analyse_sentiment(headlines: list[str]) -> pd.DataFrame:
     df.fillna(0, inplace=True)  # Fill NaN values with 0
     logger.debug(f'DataFrame: {df}')
 
-    # Calculate the compound score
+    # Calculate the compound score using the improved formula:
+    # compound = (Positive - Negative) * (1 - Neutral)
+    # This properly accounts for Neutral probability — ambiguous headlines
+    # get scores closer to 0 instead of being pushed to extremes.
     df.loc[:, 'compound'] = (
-        df.loc[:, 'Positive']
-        .where(df['Positive'] > df['Negative'], -df['Negative'])
-        .astype(float)
-        .round(4)
-    )
+        (df['Positive'] - df['Negative']) * (1 - df['Neutral'])
+    ).round(4)
     df.loc[:, 'compound'] = df.loc[:, 'compound'].fillna(0)
     df.loc[:, 'compound'] = df.loc[:, 'compound'].clip(lower=-1, upper=1)
+
+    # Add confidence score — the max probability across all 3 labels.
+    # High confidence (>0.8) means the model is sure; low (<0.5) means ambiguous.
+    df.loc[:, 'confidence'] = df[['Positive', 'Negative', 'Neutral']].max(axis=1).round(4)
+
     return df
 
 

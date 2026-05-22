@@ -12,7 +12,12 @@ from bs4 import BeautifulSoup, Tag
 from loguru import logger
 from typing_extensions import override
 
-from config import MAX_ARTICLE_AGE_DAYS, SOURCE_SUFFIXES_TO_STRIP
+from config import (
+    GENERIC_HEADLINE_PATTERNS,
+    MAX_ARTICLE_AGE_DAYS,
+    MIN_HEADLINE_LENGTH,
+    SOURCE_SUFFIXES_TO_STRIP,
+)
 from utils import get_webpage_content, parse_date
 
 # --- Health Monitoring ---
@@ -30,7 +35,7 @@ class FetchHealthReport:
     method_used: str = 'none'  # 'direct', 'fallback', 'both', 'none'
 
 
-# --- Headline Cleaning ---
+# --- Headline Cleaning & Quality ---
 
 
 def clean_headline(headline: str) -> str:
@@ -60,6 +65,24 @@ def is_article_fresh(date_posted: str) -> bool:
             return False
     except ValueError:
         pass  # If we can't parse, allow the article
+    return True
+
+
+def is_headline_quality(headline: str) -> bool:
+    """
+    Check if a headline meets quality standards for reliable sentiment analysis.
+    Rejects:
+    - Headlines shorter than MIN_HEADLINE_LENGTH (too short for FinBERT)
+    - Generic market roundup / listicle headlines (not company-specific)
+    """
+    if not headline or len(headline) < MIN_HEADLINE_LENGTH:
+        return False
+
+    headline_lower = headline.lower()
+    for pattern in GENERIC_HEADLINE_PATTERNS:
+        if pattern in headline_lower:
+            return False
+
     return True
 
 
@@ -1117,16 +1140,22 @@ class TickerNewsObject:
         articles: list[dict[str, str]],
     ) -> list[dict[str, str]]:
         """
-        Remove duplicate articles based on normalized headline text.
+        Remove duplicate articles based on normalized headline text,
+        and filter out low-quality headlines (too short, generic roundups).
         Keeps the first occurrence (which comes from the direct scraper if available).
         """
         seen_headlines: set[str] = set()
         unique_articles: list[dict[str, str]] = []
 
         for article in articles:
-            # Normalize: lowercase, strip extra spaces, remove punctuation
-            headline = article.get('headline', '').strip().lower()
-            normalized = re.sub(r'[^\w\s]', '', headline)
+            headline_raw = article.get('headline', '').strip()
+
+            # Quality filter: skip short/generic headlines
+            if not is_headline_quality(headline_raw):
+                continue
+
+            # Dedup: normalize and check for duplicates
+            normalized = re.sub(r'[^\w\s]', '', headline_raw.lower())
             normalized = re.sub(r'\s+', ' ', normalized).strip()
 
             if normalized and normalized not in seen_headlines:
