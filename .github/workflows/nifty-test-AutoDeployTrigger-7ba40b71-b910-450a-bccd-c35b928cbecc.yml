@@ -1,17 +1,19 @@
 name: Trigger auto deployment for nifty-test
 
-# When this action will be executed
-on:
-  # Automatically trigger it when detected changes in repo
-  push:
-    branches: 
-      [ index-generator-rebase ]
-    paths:
-    - '**'
-    - '.github/workflows/nifty-test-AutoDeployTrigger-7ba40b71-b910-450a-bccd-c35b928cbecc.yml'
+# DISABLED — Azure deployment not in use.
+# To re-enable, uncomment the 'on:' block below.
 
-  # Allow manual trigger 
-  workflow_dispatch:      
+# on:
+#   push:
+#     branches: 
+#       [ index-generator-rebase ]
+#     paths:
+#     - '**'
+#     - '.github/workflows/nifty-test-AutoDeployTrigger-7ba40b71-b910-450a-bccd-c35b928cbecc.yml'
+#   workflow_dispatch:
+
+on:
+  workflow_dispatch:  # manual-only, effectively disabled
 
 jobs:
   build-and-deploy:

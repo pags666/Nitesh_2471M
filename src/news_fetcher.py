@@ -93,8 +93,10 @@ class GoogleNewsSiteSource(NewsSource):
             if parsed is None:
                 logger.warning(f'Invalid RSS date: {value}')
                 return ''
-            if (datetime.now(parsed.tzinfo) - parsed).days > 30:
-                logger.warning(f'Stale RSS date: {value}')
+            age_days = (datetime.now(parsed.tzinfo) - parsed).days
+            if age_days > MAX_ARTICLE_AGE_DAYS:
+                logger.debug(f'Skipping stale RSS article ({age_days}d old): {value}')
+                return ''  # Return empty so the article is skipped
             return parsed.strftime('%Y-%m-%d %H:%M:%S')
         except (TypeError, ValueError) as exc:
             logger.warning(f'Invalid RSS date: {value} ({exc})')

@@ -39,23 +39,28 @@
 
 name: Copy sentiment_data.csv to streamlit branch
 
-on:
-  workflow_run:
-    workflows: ["Get Sentiment and update GitHub page"]
-    types:
-      - completed
+# DISABLED — Streamlit dashboard not in use.
+# To re-enable, uncomment the workflow_run trigger below.
 
-  workflow_dispatch:
+on:
+  # workflow_run:
+  #   workflows: ["Get Sentiment and update GitHub page"]
+  #   types:
+  #     - completed
+
+  workflow_dispatch:  # manual-only
 
 jobs:
   copy-csv:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
 
     steps:
       - uses: actions/checkout@v4
         with:
           ref: streamlit
           path: dest
+          fetch-depth: 0
 
       - uses: actions/checkout@v4
         with:
