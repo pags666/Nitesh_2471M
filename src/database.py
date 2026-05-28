@@ -117,7 +117,7 @@ class DatabaseManager:
                     'ALTER TABLE article_data ADD COLUMN confidence FLOAT DEFAULT NULL'
                 )
                 logger.info('Migrated article_data: added confidence column')
-            except Exception:
+            except Exception:  # nosec B110
                 pass  # Column already exists
 
     def insert_articles(

@@ -192,6 +192,10 @@ def compute_and_update_sentiment(n: int = SENTIMENT_BATCH_LIMIT):
     # perform sentiment analysis on them
     headlines: list[str] = articles_df['headline'].tolist()
     sentiment_scores = utils.analyse_sentiment(headlines)
+    # Drop existing NULL confidence column from DB result to avoid
+    # pandas creating 'confidence_x'/'confidence_y' on merge
+    if 'confidence' in articles_df.columns:
+        articles_df = articles_df.drop(columns=['confidence'])
     articles_df_with_sentiment = articles_df.merge(
         sentiment_scores, left_index=True, right_index=True, how='inner'
     )
